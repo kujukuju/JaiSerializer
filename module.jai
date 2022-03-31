@@ -1,5 +1,5 @@
 Serializer: struct {
-    unicode_strings :: true;
+    unicode_strings :: false;
     count_type :: u16;
 
     read :: (bytes: [] u8, index: *int, value: *bool) {
@@ -293,7 +293,7 @@ Serializer: struct {
     read_struct :: (bytes: [] u8, index: *int, value: *$T) {
         read_member :: ($member_name: string) #expand {
             {
-                #if #run () -> bool {
+                constant_member :: #run () -> bool {
                     // constant check
                     struct_info := cast(*Type_Info_Struct) type_info(T);
                     for member: struct_info.members {
@@ -303,18 +303,41 @@ Serializer: struct {
                     }
 
                     return false;
-                }() {
+                }();
+
+                // if the byte offset has already been visited it means it's something weird like #place
+                already_visited_byte_offset :: #run () -> bool {
+                    visited_byte_offsets: [..] int;
                     struct_info := cast(*Type_Info_Struct) type_info(T);
                     for member: struct_info.members {
                         if member.name == member_name {
-                            << index += member.type.runtime_size;
-                            break;
+                            if member.offset_in_bytes < 0 {
+                                return false;
+                            }
+
+                            return array_find(visited_byte_offsets, member.offset_in_bytes);
+                        } else {
+                            array_add(*visited_byte_offsets, member.offset_in_bytes);
                         }
                     }
-                } else {
-                    #run print("read %\n", tprint("member_value := *value.%;", member_name));
-                    #insert #run tprint("member_value := *value.%;", member_name);
-                    read(bytes, index, member_value);
+
+                    return false;
+                }();
+
+                #if !already_visited_byte_offset {
+                    #if constant_member {
+                        struct_info := cast(*Type_Info_Struct) type_info(T);
+                        for member: struct_info.members {
+                            if member.name == member_name {
+                                << index += member.type.runtime_size;
+                                break;
+                            }
+                        }
+                    } else {
+                        #run print("read %\n", tprint("member_value := *value.%;", member_name));
+                        #insert #run tprint("member_value := *value.%;", member_name);
+                        read(bytes, index, member_value);
+                    }
                 }
             }
         }

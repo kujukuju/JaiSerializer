@@ -1,8 +1,8 @@
 main :: () {
     print("%\n", << type_info(TypeWithConstant1));
 
-    c1: TypeWithConstant1;
-    c1.not_const = 2;
+    c1: TypeWithConstant2;
+    // c1.not_const = 2;
     c1.random = 5;
 
     bytes: [..] u8;
@@ -10,9 +10,16 @@ main :: () {
 
     print("thing1 %\n", c1);
     index: int;
-    c2: TypeWithConstant1;
-    Serializer.read(bytes, *index, *c2);
-    print("thing2 %\n", c2);
+    found, type := Serializer.get_struct_type(bytes, 0, .[TypeWithConstant1, TypeWithConstant2]);
+    if type == TypeWithConstant1 {
+        c2: TypeWithConstant1;
+        Serializer.read(bytes, *index, *c2);
+        print("thing2 % %\n", c2, type_of(c2));
+    } else if type == TypeWithConstant2 {
+        c2: TypeWithConstant2;
+        Serializer.read(bytes, *index, *c2);
+        print("thing2 % %\n", c2, type_of(c2));
+    }
 
     print("bytes %\n", bytes);
     potential_types :: Type.[TypeWithConstant1, TypeWithConstant2];
