@@ -370,8 +370,29 @@ Serializer: struct {
     write_struct :: (bytes: *[..] u8, value: $T) {
         write_member :: ($member_name: string) #expand {
             {
-                #insert #run tprint("member_value := value.%;", member_name);
-                write(bytes, member_value);
+                // if the byte offset has already been visited it means it's something weird like #place
+                already_visited_byte_offset :: #run () -> bool {
+                    visited_byte_offsets: [..] int;
+                    struct_info := cast(*Type_Info_Struct) type_info(T);
+                    for member: struct_info.members {
+                        if member.name == member_name {
+                            if member.offset_in_bytes < 0 {
+                                return false;
+                            }
+
+                            return array_find(visited_byte_offsets, member.offset_in_bytes);
+                        } else {
+                            array_add(*visited_byte_offsets, member.offset_in_bytes);
+                        }
+                    }
+
+                    return false;
+                }();
+                
+                #if !already_visited_byte_offset {
+                    #insert #run tprint("member_value := value.%;", member_name);
+                    write(bytes, member_value);
+                }
             }
         }
 
