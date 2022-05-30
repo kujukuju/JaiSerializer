@@ -1,7 +1,4 @@
-Serializer: struct {
-    unicode_strings :: false;
-    count_type :: u16;
-
+Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
     read :: (bytes: [] u8, index: *int, value: *bool) {
         assert(<< index + 1 <= bytes.count);
 
@@ -151,7 +148,7 @@ Serializer: struct {
     read :: (bytes: [] u8, index: *int, value: *string) {
         count: count_type;
         read(bytes, index, *count);
-        #if Serializer.unicode_strings {
+        #if unicode_strings {
             assert(<< index + count * 4 <= bytes.count);
 
             value.data = alloc(count * 4);
@@ -172,7 +169,7 @@ Serializer: struct {
 
     write :: (bytes: *[..] u8, value: string) {
         write(bytes, cast(count_type) value.count);
-        #if Serializer.unicode_strings {
+        #if unicode_strings {
             for i: 0..value.count - 1 {
                 array_add(bytes, 0);
                 array_add(bytes, 0);
