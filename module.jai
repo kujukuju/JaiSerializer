@@ -331,7 +331,7 @@ Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
                             }
                         }
                     } else {
-                        #run print("read %\n", tprint("member_value := *value.%;", member_name));
+                        // #run print("read %\n", tprint("member_value := *value.%;", member_name));
                         #insert #run tprint("member_value := *value.%;", member_name);
                         read(bytes, index, member_value);
                     }
