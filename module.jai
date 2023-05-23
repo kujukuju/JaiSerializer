@@ -1,4 +1,4 @@
-Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
+Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
     read :: (bytes: [] u8, index: *int, value: *bool) {
         assert(<< index + 1 <= bytes.count);
 
@@ -192,8 +192,12 @@ Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
             read_struct(bytes, index, value);
         } else #if #run type_info(T).type == .VARIANT {
             read_variant(bytes, index, value);
+        } else #if #run type_info(T).type == .POINTER {
+            read_pointer(bytes, index, value);
         } else {
-            #run print("Not supported type read. % %\n", type_info(T).type, T);
+            #run () {
+                print("Not supported type read. % %\n", type_info(T).type, T);
+            }();
             #run assert(false && tprint("Not supported type read. %", type_info(T).type));
         }
     }
@@ -207,8 +211,12 @@ Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
             write_struct(bytes, value);
         } else #if #run type_info(T).type == .VARIANT {
             write_variant(bytes, value);
+        } else #if #run type_info(T).type == .POINTER {
+            write_pointer(bytes, value);
         } else {
-            #run print("Not supported type write. % %\n", type_info(T).type, T);
+            #run () {
+                print("Not supported type write. % %\n", type_info(T).type, T);
+            }();
             #run assert(false && tprint("Not supported type write. %", type_info(T).type));
         }
     }
@@ -238,6 +246,14 @@ Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
     }
 
     write_array :: (bytes: *[..] u8, array: [..] $T) {
+        write(bytes, array.count);
+
+        for i: 0..array.count - 1 {
+            write(bytes, array[i]);
+        }
+    }
+
+    write_array :: (bytes: *[..] u8, array: [] $T) {
         write(bytes, array.count);
 
         for i: 0..array.count - 1 {
@@ -407,6 +423,7 @@ Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
         get_member_names :: () -> [] string {
             #insert #run tprint("member_names: [%] string;", (cast(*Type_Info_Struct) type_info(T)).members.count);
             info := cast(*Type_Info_Struct) type_info(T);
+            print("getting members of %\n", << info);
             for i: 0..info.members.count - 1 {
                 member_names[i] = info.members[i].name;
             }
@@ -430,6 +447,37 @@ Serializer :: struct(count_type: Type = int, unicode_strings: bool = false) {
 
         casted: ConstantType = cast(ConstantType) value;
         write(bytes, casted);
+    }
+
+    read_pointer :: (bytes: [] u8, index: *int, value: *$T) {
+        #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot read a relative pointer.");
+
+        ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
+
+        exists := << cast(*bool) *bytes[<< index];
+        << index += 1;
+
+        if !exists {
+            << value = null;
+        } else {
+            allocated := New(ConstantType, false);
+            << value = allocated;
+
+            read(bytes, index, allocated);
+        }
+    }
+
+    write_pointer :: (bytes: *[..] u8, value: $T) {
+        #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot write a relative pointer.");
+
+        ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
+
+        if value == null {
+            array_add(bytes, 0);
+        } else {
+            array_add(bytes, 1);
+            write(bytes, << value);
+        }
     }
 
     get_struct_type :: (bytes: [] u8, index: int, length: int, $types: [$N] Type) -> bool, Type {
