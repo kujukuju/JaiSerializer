@@ -253,6 +253,17 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
         }
     }
 
+    read_array :: (bytes: [] u8, index: *int, value: *[] $T) {
+        count: int;
+        read(bytes, index, *count);
+        << value = NewArray(count, T);
+
+        value.count = count;
+        for i: 0..count - 1 {
+            read(bytes, index, (cast(*T) value.data) + i);
+        }
+    }
+
     write_array :: (bytes: *[..] u8, array: [] $T) {
         write(bytes, array.count);
 
