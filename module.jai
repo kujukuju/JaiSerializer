@@ -461,7 +461,8 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
     }
 
     read_pointer :: (bytes: [] u8, index: *int, value: *$T) {
-        #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot read a relative pointer.");
+        // I think relative pointers were removed?
+        // #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot read a relative pointer.");
 
         ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
 
@@ -479,7 +480,7 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
     }
 
     write_pointer :: (bytes: *[..] u8, value: $T) {
-        #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot write a relative pointer.");
+        // #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot write a relative pointer.");
 
         ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
 
