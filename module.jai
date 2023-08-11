@@ -118,16 +118,16 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
     }
 
     read :: (bytes: [] u8, index: *int, value: *float) {
-        assert(<< index + 4 <= bytes.count);
+        assert(index.* + 4 <= bytes.count);
 
-        << value = << cast(*float) *bytes[<< index];
-        << index += 4;
+        value.* = (cast(*float) *bytes[<< index]).*;
+        index.* += 4;
     }
 
     write :: (bytes: *[..] u8, value: float) {
-        byte: *u8 = xx *value;
+        byte: *u8 = cast(*u8) *value;
         for i: 0..3 {
-            array_add(bytes, << (byte + i));
+            array_add(bytes, (byte + i).*);
         }
     }
 
@@ -360,6 +360,7 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
                     } else {
                         // #run print("read %\n", tprint("member_value := *value.%;", member_name));
                         #insert #run tprint("member_value := *value.%;", member_name);
+                        // #insert #run tprint("print(\"crashing at %\\n\");", member_name);
                         read(bytes, index, member_value);
                     }
                 }
@@ -434,7 +435,6 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
         get_member_names :: () -> [] string {
             #insert #run tprint("member_names: [%] string;", (cast(*Type_Info_Struct) type_info(T)).members.count);
             info := cast(*Type_Info_Struct) type_info(T);
-            print("getting members of %\n", << info);
             for i: 0..info.members.count - 1 {
                 member_names[i] = info.members[i].name;
             }
