@@ -10,7 +10,8 @@ serializer_read :: (bytes: [] u8, value: *$T, $reuse_memory: bool = false) {
 }
 
 serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool = false) -> int {
-    info :: #run type_info(T);
+    // info :: #run type_info(T);
+    info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
     pod :: #run is_pod(T);
 
@@ -27,25 +28,25 @@ serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool =
     }
 
     #if !pod {
-        #if #run info.type == .STRING {
+        #if #run info_type == .STRING {
             #if reuse_memory {
                 inline read_string_reuse(view, value);
             } else {
                 offset = inline read_string(bytes, value, offset);
             }
-        } else #if #run info.type == .POINTER {
+        } else #if #run info_type == .POINTER {
             #if reuse_memory {
                 inline read_pointer_reuse(view, value);
             } else {
                 offset = inline read_pointer(bytes, value, offset);
             }
-        } else #if #run info.type == .STRUCT {
+        } else #if #run info_type == .STRUCT {
             #if reuse_memory {
                 inline read_struct_reuse(view, value);
             } else {
                 offset = inline read_struct(bytes, value, offset);
             }
-        } else #if #run info.type == .ARRAY {
+        } else #if #run info_type == .ARRAY {
             #if reuse_memory {
                 inline read_array_reuse(view, value);
             } else {
@@ -61,7 +62,8 @@ serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool =
 }
 
 serializer_write :: (bytes: *[..] u8, value: $T, $reuse_memory: bool = false) {
-    info :: #run type_info(T);
+    // info :: #run type_info(T);
+    info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
     pod :: #run is_pod(T);
 
@@ -82,25 +84,25 @@ serializer_write :: (bytes: *[..] u8, value: $T, $reuse_memory: bool = false) {
     }
     
     #if !pod {
-        #if #run info.type == .STRING {
+        #if #run info_type == .STRING {
             #if reuse_memory {
                 inline write_string_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_string(bytes, value);
             }
-        } else #if #run info.type == .POINTER {
+        } else #if #run info_type == .POINTER {
             #if reuse_memory {
                 inline write_pointer_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_pointer(bytes, value);
             }
-        } else #if #run info.type == .STRUCT {
+        } else #if #run info_type == .STRUCT {
             #if reuse_memory {
                 inline write_struct_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_struct(bytes, value);
             }
-        } else #if #run info.type == .ARRAY {
+        } else #if #run info_type == .ARRAY {
             #if reuse_memory {
                 inline write_array_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
@@ -159,18 +161,19 @@ is_pod :: (T: Type) -> bool {
 #scope_file
 
 serializer_read_reuse :: (bytes: [] u8, value: *$T) {
-    info :: #run type_info(T);
+    // info :: #run type_info(T);
+    info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
     pod :: #run is_pod(T);
 
     #if !pod {
-        #if #run info.type == .STRING {
+        #if #run info_type == .STRING {
             inline read_string_reuse(bytes, value);
-        } else #if #run info.type == .POINTER {
+        } else #if #run info_type == .POINTER {
             inline read_pointer_reuse(bytes, value);
-        } else #if #run info.type == .STRUCT {
+        } else #if #run info_type == .STRUCT {
             inline read_struct_reuse(bytes, value);
-        } else #if #run info.type == .ARRAY {
+        } else #if #run info_type == .ARRAY {
             inline read_array_reuse(bytes, value);
         } else {
             #run print("Unhandled serialization type. %\n", T);
@@ -317,13 +320,15 @@ read_struct :: (bytes: [] u8, value: *$T, offset: int) -> int {
 }
 
 read_array_reuse :: (bytes: [] u8, value: *$T) {
-    info :: #run cast(*Type_Info_Array) type_info(T);
-    element_info :: #run info.element_type;
-    element_type :: #run get_type(element_info);
+    // info :: #run cast(*Type_Info_Array) type_info(T);
+    // element_info :: #run (cast(*Type_Info_Array) type_info(T)).element_type;
+    info_array_type :: #run (cast(*Type_Info_Array) type_info(T)).array_type;
+    element_info_type :: #run (cast(*Type_Info_Array) type_info(T)).element_type.type;
+    element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
     value.data = cast(*element_type) (cast(int) bytes.data + cast(int) value.data);
-    #if #run info.array_type == .RESIZABLE {
+    #if #run info_array_type == .RESIZABLE {
         value.allocator = reuse_allocator;
     }
 
@@ -332,13 +337,13 @@ read_array_reuse :: (bytes: [] u8, value: *$T) {
         for i: 0..value.count - 1 {
             element_pointer: *element_type = value.data + i;
 
-            #if #run element_info.type == .STRING {
+            #if #run element_info_type == .STRING {
                 inline read_string_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .POINTER {
+            } else #if #run element_info_type == .POINTER {
                 inline read_pointer_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .STRUCT {
+            } else #if #run element_info_type == .STRUCT {
                 inline read_struct_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .ARRAY {
+            } else #if #run element_info_type == .ARRAY {
                 inline read_array_reuse(bytes, element_pointer);
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
@@ -349,9 +354,10 @@ read_array_reuse :: (bytes: [] u8, value: *$T) {
 }
 
 read_array :: (bytes: [] u8, value: *$T, offset: int) -> int {
-    info :: #run cast(*Type_Info_Array) type_info(T);
-    element_info :: #run info.element_type;
-    element_type :: #run get_type(element_info);
+    // info :: #run cast(*Type_Info_Array) type_info(T);
+    // element_info :: #run info.element_type;
+    element_info_type :: #run (cast(*Type_Info_Array) type_info(T)).element_type.type;
+    element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
     count_size :: #run size_of(count_type);
@@ -370,13 +376,13 @@ read_array :: (bytes: [] u8, value: *$T, offset: int) -> int {
         for i: 0..value.count - 1 {
             element_pointer := value.data + i;
 
-            #if #run element_info.type == .STRING {
+            #if #run element_info_type == .STRING {
                 offset = inline read_string(bytes, element_pointer, offset);
-            } else #if #run element_info.type == .POINTER {
+            } else #if #run element_info_type == .POINTER {
                 offset = inline read_pointer(bytes, element_pointer, offset);
-            } else #if #run element_info.type == .STRUCT {
+            } else #if #run element_info_type == .STRUCT {
                 offset = inline read_struct(bytes, element_pointer, offset);
-            } else #if #run element_info.type == .ARRAY {
+            } else #if #run element_info_type == .ARRAY {
                 offset = inline read_array(bytes, element_pointer, offset);
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
@@ -411,9 +417,10 @@ write_string :: (bytes: *[..] u8, value: $T) {
 }
 
 write_pointer_reuse :: (bytes: *[..] u8, value: *$T) {
-    info :: #run cast(*Type_Info_Pointer) type_info(T);
-    element_info :: #run info.pointer_to;
-    element_type :: #run get_type(element_info);
+    // info :: #run cast(*Type_Info_Pointer) type_info(T);
+    // element_info :: #run (cast(*Type_Info_Pointer) type_info(T)).pointer_to;
+    element_info_type :: #run (cast(*Type_Info_Pointer) type_info(T)).pointer_to.type;
+    element_type :: #run get_type((cast(*Type_Info_Pointer) type_info(T)).pointer_to);
     element_size :: #run size_of(element_type);
 
     if value.* {
@@ -425,13 +432,13 @@ write_pointer_reuse :: (bytes: *[..] u8, value: *$T) {
         #if #run !is_pod(element_type) {
             element_pointer := cast(T) (bytes.data + bytes.count - element_size);
 
-            #if #run element_info.type == .STRING {
+            #if #run element_info_type == .STRING {
                 inline write_string_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .POINTER {
+            } else #if #run element_info_type == .POINTER {
                 inline write_pointer_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .STRUCT {
+            } else #if #run element_info_type == .STRUCT {
                 inline write_struct_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .ARRAY {
+            } else #if #run element_info_type == .ARRAY {
                 inline write_array_reuse(bytes, element_pointer);
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
@@ -442,10 +449,11 @@ write_pointer_reuse :: (bytes: *[..] u8, value: *$T) {
 }
 
 write_pointer :: (bytes: *[..] u8, value: $T) {
+    // info :: #run cast(*Type_Info_Pointer) type_info(T);
+    // element_info :: #run (cast(*Type_Info_Pointer) type_info(T)).pointer_to;
     bool_size :: #run size_of(bool);
-    info :: #run cast(*Type_Info_Pointer) type_info(T);
-    element_info :: #run info.pointer_to;
-    element_type :: #run get_type(element_info);
+    element_info_type :: #run (cast(*Type_Info_Pointer) type_info(T)).pointer_to.type;
+    element_type :: #run get_type((cast(*Type_Info_Pointer) type_info(T)).pointer_to);
     element_size :: #run size_of(element_type);
 
     if value {
@@ -456,13 +464,13 @@ write_pointer :: (bytes: *[..] u8, value: $T) {
         #if #run is_pod(element_type) {
             memcpy(bytes.data + bytes.count, value, element_size);
             bytes.count += element_size;
-        } else #if #run element_info.type == .STRING {
+        } else #if #run element_info_type == .STRING {
             inline write_string(bytes, value.*);
-        } else #if #run element_info.type == .POINTER {
+        } else #if #run element_info_type == .POINTER {
             inline write_pointer(bytes, value.*);
-        } else #if #run element_info.type == .STRUCT {
+        } else #if #run element_info_type == .STRUCT {
             inline write_struct(bytes, value.*);
-        } else #if #run element_info.type == .ARRAY {
+        } else #if #run element_info_type == .ARRAY {
             inline write_array(bytes, value.*);
         } else {
             #run print("Unhandled serialization type. %\n", element_type);
@@ -562,9 +570,10 @@ write_struct :: (bytes: *[..] u8, value: $T) {
 }
 
 write_array_reuse :: (bytes: *[..] u8, value: *$T) {
-    info :: #run cast(*Type_Info_Array) type_info(T);
-    element_info :: #run info.element_type;
-    element_type :: #run get_type(element_info);
+    // info :: #run cast(*Type_Info_Array) type_info(T);
+    // element_info :: #run info.element_type;
+    element_info_type :: #run (cast(*Type_Info_Array) type_info(T)).element_type.type;
+    element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
     allocate_bytes := value.count * element_size;
@@ -581,13 +590,13 @@ write_array_reuse :: (bytes: *[..] u8, value: *$T) {
         for i: 0..value.count - 1 {
             element_pointer: *element_type = start_pointer + i;
 
-            #if #run element_info.type == .STRING {
+            #if #run element_info_type == .STRING {
                 inline write_string_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .POINTER {
+            } else #if #run element_info_type == .POINTER {
                 inline write_pointer_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .STRUCT {
+            } else #if #run element_info_type == .STRUCT {
                 inline write_struct_reuse(bytes, element_pointer);
-            } else #if #run element_info.type == .ARRAY {
+            } else #if #run element_info_type == .ARRAY {
                 inline write_array_reuse(bytes, element_pointer);
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
@@ -598,9 +607,10 @@ write_array_reuse :: (bytes: *[..] u8, value: *$T) {
 }
 
 write_array :: (bytes: *[..] u8, value: $T) {
-    info :: #run cast(*Type_Info_Array) type_info(T);
-    element_info :: #run info.element_type;
-    element_type :: #run get_type(element_info);
+    // info :: #run cast(*Type_Info_Array) type_info(T);
+    // element_info :: #run (cast(*Type_Info_Array) type_info(T)).element_type;
+    element_info_type :: #run (cast(*Type_Info_Array) type_info(T)).element_type.type;
+    element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
     count_size :: #run size_of(count_type);
@@ -617,13 +627,13 @@ write_array :: (bytes: *[..] u8, value: $T) {
         bytes.count += count_size;
 
         for element: value {
-            #if #run element_info.type == .STRING {
+            #if #run element_info_type == .STRING {
                 inline write_string(bytes, element);
-            } else #if #run element_info.type == .POINTER {
+            } else #if #run element_info_type == .POINTER {
                 inline write_pointer(bytes, element);
-            } else #if #run element_info.type == .STRUCT {
+            } else #if #run element_info_type == .STRUCT {
                 inline write_struct(bytes, element);
-            } else #if #run element_info.type == .ARRAY {
+            } else #if #run element_info_type == .ARRAY {
                 inline write_array(bytes, element);
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
@@ -638,18 +648,21 @@ get_type :: (info: *Type_Info) -> Type {
 }
 
 get_write_size :: (value: $T) -> int {
-    info :: #run type_info(T);
+    // info :: #run type_info(T);
+    info_type :: #run type_info(T).type;
 
     #if #run is_pod(T) {
         return size_of(T);
-    } else #if #run info.type == .STRING {
+    } else #if #run info_type == .STRING {
         return size_of(count_type) + value.count;
-    } else #if #run info.type == .POINTER {
+    } else #if #run info_type == .POINTER {
         return size_of(bool) + get_write_size(value.*);
-    } else #if #run info.type == .STRUCT {
-        struct_info :: #run cast(*Type_Info_Struct) info;
+    } else #if #run info_type == .STRUCT {
 
         #insert #run () -> string {
+            info := type_info(T);
+            struct_info := cast(*Type_Info_Struct) info;
+
             builder: String_Builder;
             written: bool;
 
@@ -679,14 +692,16 @@ get_write_size :: (value: $T) -> int {
 
             return builder_to_string(*builder);
         }();
-    } else #if #run info.type == .ARRAY {
-        array_info :: #run cast(*Type_Info_Array) info;
-        element_info :: #run array_info.element_type;
-        element_type :: #run get_type(element_info);
+    } else #if #run info_type == .ARRAY {
+        // array_info :: #run cast(*Type_Info_Array) info;
+        array_info_array_type :: #run (cast(*Type_Info_Array) type_info(T)).array_type;
+        // element_info :: #run (cast(*Type_Info_Array) info).element_type;
+        element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
+        element_size :: #run size_of(element_type);
     
         #if #run is_pod(element_type) {
-            return size_of(count_type) + value.count * size_of(element_type);
-        } else #if #run array_info.array_type == .FIXED {
+            return size_of(count_type) + value.count * element_size;
+        } else #if #run array_info_array_type == .FIXED {
             total_size := 0;
             for element: value {
                 total_size += get_write_size(element);
@@ -706,8 +721,6 @@ get_write_size :: (value: $T) -> int {
 }
 
 get_write_size_reuse :: (value: $T) -> int {
-    info :: #run type_info(T);
-
     #if #run is_pod(T) {
         return size_of(T);
     } else {
@@ -717,18 +730,20 @@ get_write_size_reuse :: (value: $T) -> int {
 
 // this is just the allocated size of memory
 get_data_write_size_reuse :: (value: $T) -> int {
-    info :: #run type_info(T);
+    // info :: #run type_info(T);
+    info_type :: #run type_info(T).type;
 
     #if #run is_pod(T) {
         return 0;
-    } else #if #run info.type == .STRING {
+    } else #if #run info_type == .STRING {
         return value.count;
-    } else #if #run info.type == .POINTER {
+    } else #if #run info_type == .POINTER {
         return get_write_size_reuse(value.*);
-    } else #if #run info.type == .STRUCT {
-        struct_info :: #run cast(*Type_Info_Struct) info;
-
+    } else #if #run info_type == .STRUCT {
         #insert #run () -> string {
+            info := type_info(T);
+            struct_info := cast(*Type_Info_Struct) info;
+
             builder: String_Builder;
             written: bool;
 
@@ -755,10 +770,11 @@ get_data_write_size_reuse :: (value: $T) -> int {
 
             return builder_to_string(*builder);
         }();
-    } else #if #run info.type == .ARRAY {
-        array_info :: #run cast(*Type_Info_Array) info;
-        element_info :: #run array_info.element_type;
-        element_type :: #run get_type(element_info);
+    } else #if #run info_type == .ARRAY {
+        // info :: #run type_info(T);
+        // array_info :: #run cast(*Type_Info_Array) info;
+        // element_info :: #run array_info.element_type;
+        element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     
         #if #run is_pod(element_type) {
             return value.count * size_of(element_type);

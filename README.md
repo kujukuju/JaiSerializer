@@ -2,37 +2,45 @@
 
 Serializes structs and data based on the member variables.
 
-Works with constant values. Writes constants into the byte stream, and skips over them when reading from the byte stream. Probably will add a flag in the future to skip writing completely.
+Rewrote this recently for big efficiency improvements to memcpy large POD chunks.
 
-Works with directives like #place. Ignores member variables in byte locations that have already been visited.
+Works with directives like #place. (Haven't tested this since the rework but it should still work.) Ignores member variables in byte locations that have already been visited.
 
-Unicode doesn't work yet but I intend to get it working eventually.
+Does not yet work with unions, but I intend to allow this to work with unions containing only POD values in the future.
+
+### Reuse Memory Mode
+
+You can use the compile time variable `reuse_memory` to write the memory in such a way that entire chunks can be loaded through pointer offsets.
+
+To use `reuse_memory` you have to both write and read while having the flag enabled. The goal is that you read your file, and then you load the data into your object by just moving pointers around.
+
+The downside of `reuse_memory` is that the data is no longer valid. You can no longer free or realloc pointers, so resizable arrays are completely broken.
+
+So, `reuse_memory` is meant to be used for large constant non-changing like searchable triangle binary trees, or large models/assets.
+
+As an example, the reason I added this method was that loading my giant 300 mb tree of decal triangles was taking about 4 seconds. After loading the decal tree in `reuse_memory` mode it takes about 10 milliseconds.
 
 Example:
 ```jai
-SERIALIZER: Serializer;
-MORE_COMPACT_SERIALIZER: Serializer(u16);
+#import "JaiSerializer";
 
 main :: () {
     TypeWithConstant1 :: struct {
         number :: 1;
         not_const: u32;
+        const :: 4;
         random: int;
     }
-    
-    c1: TypeWithConstant1;
-    c1.not_const = 4;
-    c1.random = -5;
+
+    thing1: TypeWithConstant1;
+    thing1.not_const = 1;
 
     bytes: [..] u8;
-    SERIALIZER.write(*bytes, c1);
+    serializer_write(*bytes, thing1);
 
-    print("%\n", bytes);
+    thing2: TypeWithConstant1;
+    serializer_read(bytes, *thing2);
 
-    c2: TypeWithConstant1;
-    index: int;
-    SERIALIZER.read(bytes, *index, *c2);
-
-    print("%\n", c2);
+    print("%\n%\n\n", thing1, thing2);
 }
 ```
