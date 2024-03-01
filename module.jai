@@ -5,11 +5,15 @@
 
 // TODO the current problem is serializer_read always memcpys for reuse mode, even though it should only do it on the first call
 
-serializer_read :: (bytes: [] u8, value: *$T, $reuse_memory: bool = false) {
+// what makes this so complicated to read, is typically the reuse serializer will write the raw bytes of an object or array into the bytes array/memory
+// and then it will update the value data pointer to point back to that newly written data, so if it then changes something like value.data (the data pointer of an array)
+// the data change will be reflected in the raw byte array
+
+serializer_read :: (bytes: [] u8, value: *$T, $reuse_memory: bool = false, $loc := #caller_location) {
     serializer_read(bytes, value, 0, reuse_memory);
 }
 
-serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool = false) -> int {
+serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool = false, $loc := #caller_location) -> int {
     // info :: #run type_info(T);
     info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
@@ -28,33 +32,35 @@ serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool =
     }
 
     #if !pod {
-        #if #run info_type == .STRING {
+        #if info_type == .STRING {
             #if reuse_memory {
                 inline read_string_reuse(view, value);
             } else {
                 offset = inline read_string(bytes, value, offset);
             }
-        } else #if #run info_type == .POINTER {
+        } else #if info_type == .POINTER {
             #if reuse_memory {
                 inline read_pointer_reuse(view, value);
             } else {
                 offset = inline read_pointer(bytes, value, offset);
             }
-        } else #if #run info_type == .STRUCT {
+        } else #if info_type == .STRUCT {
             #if reuse_memory {
                 inline read_struct_reuse(view, value);
             } else {
                 offset = inline read_struct(bytes, value, offset);
             }
-        } else #if #run info_type == .ARRAY {
+        } else #if info_type == .ARRAY {
             #if reuse_memory {
                 inline read_array_reuse(view, value);
             } else {
                 offset = inline read_array(bytes, value, offset);
             }
+        } else #if info_type == .VOID {
+
         } else {
             #run print("Unhandled serialization type. %\n", T);
-            #run assert(false, "Unhandled serialization type.");
+            #run assert(false, tprint("Unhandled serialization type. %\n", T));
         }
     }
 
@@ -84,38 +90,39 @@ serializer_write :: (bytes: *[..] u8, value: $T, $reuse_memory: bool = false) {
     }
     
     #if !pod {
-        #if #run info_type == .STRING {
+        #if info_type == .STRING {
             #if reuse_memory {
                 inline write_string_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_string(bytes, value);
             }
-        } else #if #run info_type == .POINTER {
+        } else #if info_type == .POINTER {
             #if reuse_memory {
                 inline write_pointer_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_pointer(bytes, value);
             }
-        } else #if #run info_type == .STRUCT {
+        } else #if info_type == .STRUCT {
             #if reuse_memory {
                 inline write_struct_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_struct(bytes, value);
             }
-        } else #if #run info_type == .ARRAY {
+        } else #if info_type == .ARRAY {
             #if reuse_memory {
                 inline write_array_reuse(bytes, cast(*T) (bytes.data + bytes.count - t_size));
             } else {
                 inline write_array(bytes, value);
             }
+        } else #if info_type == .VOID {
+
         } else {
             #run print("Unhandled serialization type. %\n", T);
             #run assert(false, "Unhandled serialization type.");
         }
     }
 
-    print("% == %\n", bytes.count, bytes.allocated);
-    assert(bytes.count == bytes.allocated);
+    assert(bytes.count == bytes.allocated, tprint("Allocated and count size must match. % = %\n", bytes.count, bytes.allocated));
 }
 
 // this function errs on the side of caution, some types aren't even considered
@@ -140,6 +147,7 @@ is_pod :: (T: Type) -> bool {
 
             pod := true;
             for member: struct_info.members {
+                // could a constant member be non-constant?
                 is_pod_member := (member.flags & .CONSTANT) || is_pod(get_type(member.type));
                 pod = pod && is_pod_member;
             }
@@ -167,14 +175,16 @@ serializer_read_reuse :: (bytes: [] u8, value: *$T) {
     pod :: #run is_pod(T);
 
     #if !pod {
-        #if #run info_type == .STRING {
+        #if info_type == .STRING {
             inline read_string_reuse(bytes, value);
-        } else #if #run info_type == .POINTER {
+        } else #if info_type == .POINTER {
             inline read_pointer_reuse(bytes, value);
-        } else #if #run info_type == .STRUCT {
+        } else #if info_type == .STRUCT {
             inline read_struct_reuse(bytes, value);
-        } else #if #run info_type == .ARRAY {
+        } else #if info_type == .ARRAY {
             inline read_array_reuse(bytes, value);
+        } else #if info_type == .VOID {
+
         } else {
             #run print("Unhandled serialization type. %\n", T);
             #run assert(false, "Unhandled serialization type.");
@@ -185,7 +195,7 @@ serializer_read_reuse :: (bytes: [] u8, value: *$T) {
 read_string_reuse :: (bytes: [] u8, value: *$T) {
     string_size :: #run size_of(T);
 
-    value.data = cast(*u8) value.data + cast(int) bytes.data;
+    value.data = bytes.data + cast(int) value.data;
     // (cast(*u8) value.data) += bytes.data;
 }
 
@@ -240,10 +250,10 @@ read_struct_reuse :: (bytes: [] u8, value: *$T) {
             member_info := member.type;
             member_type := get_type(member_info);
 
-            if member.flags & .CONSTANT {
+            if should_skip_member(member) {
                 continue;
             }
-            
+
             if is_pod(member_type) {
                 continue;
             }
@@ -259,8 +269,8 @@ read_struct_reuse :: (bytes: [] u8, value: *$T) {
             } else if member_info.type == .ARRAY {
                 append(*builder, tprint("inline read_array_reuse(bytes, *value.%);", member.name));
             } else {
-                print("Unhandled serialization type. %\n", T);
-                assert(false, "Unhandled serialization type.");
+                print("Unhandled serialization type. % %\n", member_info.type, T);
+                assert(false, tprint("Unhandled serialization type. % %\n", member_info.type, T));
             }
         }
 
@@ -282,7 +292,7 @@ read_struct :: (bytes: [] u8, value: *$T, offset: int) -> int {
             member_info := member.type;
             member_type := get_type(member_info);
 
-            if member.flags & .CONSTANT {
+            if should_skip_member(member) {
                 continue;
             }
 
@@ -327,7 +337,14 @@ read_array_reuse :: (bytes: [] u8, value: *$T) {
     element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
-    value.data = cast(*element_type) (cast(int) bytes.data + cast(int) value.data);
+    #if info_array_type == .FIXED {
+        // copy memory basically, unfortunately
+        // value.* = (cast(*T) (bytes.data + cast(int) value.data)).*;
+    } else {
+        // move data pointer
+        value.data = cast(*element_type) (cast(int) bytes.data + cast(int) value.data);
+    }
+
     #if #run info_array_type == .RESIZABLE {
         value.allocator = reuse_allocator;
     }
@@ -337,14 +354,16 @@ read_array_reuse :: (bytes: [] u8, value: *$T) {
         for i: 0..value.count - 1 {
             element_pointer: *element_type = value.data + i;
 
-            #if #run element_info_type == .STRING {
+            #if element_info_type == .STRING {
                 inline read_string_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .POINTER {
+            } else #if element_info_type == .POINTER {
                 inline read_pointer_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .STRUCT {
+            } else #if element_info_type == .STRUCT {
                 inline read_struct_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .ARRAY {
+            } else #if element_info_type == .ARRAY {
                 inline read_array_reuse(bytes, element_pointer);
+            } else #if element_info_type == .VOID {
+
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
                 #run assert(false, "Unhandled serialization type.");
@@ -360,30 +379,33 @@ read_array :: (bytes: [] u8, value: *$T, offset: int) -> int {
     element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
-    count_size :: #run size_of(count_type);
-    count: count_type;
-    memcpy(*count, bytes.data + offset, count_size);
-    array_resize(value, count);
+    #if #run (cast(*Type_Info_Array) type_info(T)).array_type != .FIXED {
+        count_size :: #run size_of(count_type);
+        count: count_type;
+        memcpy(*count, bytes.data + offset, count_size);
+        array_resize(value, count);
+        offset += count_size;
+    }
 
     #if #run is_pod(element_type) {
         allocate_size := value.count * element_size;
 
-        memcpy(value.data, bytes.data + offset + count_size, allocate_size);
-        offset += count_size + allocate_size;
+        memcpy(value.data, bytes.data + offset, allocate_size);
+        offset += allocate_size;
     } else {
-        offset += count_size;
-
         for i: 0..value.count - 1 {
             element_pointer := value.data + i;
 
-            #if #run element_info_type == .STRING {
+            #if element_info_type == .STRING {
                 offset = inline read_string(bytes, element_pointer, offset);
-            } else #if #run element_info_type == .POINTER {
+            } else #if element_info_type == .POINTER {
                 offset = inline read_pointer(bytes, element_pointer, offset);
-            } else #if #run element_info_type == .STRUCT {
+            } else #if element_info_type == .STRUCT {
                 offset = inline read_struct(bytes, element_pointer, offset);
-            } else #if #run element_info_type == .ARRAY {
+            } else #if element_info_type == .ARRAY {
                 offset = inline read_array(bytes, element_pointer, offset);
+            } else #if element_info_type == .VOID {
+
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
                 #run assert(false, "Unhandled serialization type.");
@@ -432,14 +454,16 @@ write_pointer_reuse :: (bytes: *[..] u8, value: *$T) {
         #if #run !is_pod(element_type) {
             element_pointer := cast(T) (bytes.data + bytes.count - element_size);
 
-            #if #run element_info_type == .STRING {
+            #if element_info_type == .STRING {
                 inline write_string_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .POINTER {
+            } else #if element_info_type == .POINTER {
                 inline write_pointer_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .STRUCT {
+            } else #if element_info_type == .STRUCT {
                 inline write_struct_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .ARRAY {
+            } else #if element_info_type == .ARRAY {
                 inline write_array_reuse(bytes, element_pointer);
+            } else #if element_info_type == .VOID {
+
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
                 #run assert(false, "Unhandled serialization type.");
@@ -464,17 +488,19 @@ write_pointer :: (bytes: *[..] u8, value: $T) {
         #if #run is_pod(element_type) {
             memcpy(bytes.data + bytes.count, value, element_size);
             bytes.count += element_size;
-        } else #if #run element_info_type == .STRING {
+        } else #if element_info_type == .STRING {
             inline write_string(bytes, value.*);
-        } else #if #run element_info_type == .POINTER {
+        } else #if element_info_type == .POINTER {
             inline write_pointer(bytes, value.*);
-        } else #if #run element_info_type == .STRUCT {
+        } else #if element_info_type == .STRUCT {
             inline write_struct(bytes, value.*);
-        } else #if #run element_info_type == .ARRAY {
+        } else #if element_info_type == .ARRAY {
             inline write_array(bytes, value.*);
+        } else #if element_info_type == .VOID {
+
         } else {
-            #run print("Unhandled serialization type. %\n", element_type);
-            #run assert(false, "Unhandled serialization type.");
+            #run print("Unhandled serialization type. % %\n", element_type, element_info_type);
+            #run assert(false, tprint("Unhandled serialization type. % %\n", element_type, element_info_type));
         }
     } else {
         exists := false;
@@ -493,7 +519,7 @@ write_struct_reuse :: (bytes: *[..] u8, value: *$T) {
             member_info := member.type;
             member_type := get_type(member_info);
 
-            if member.flags & .CONSTANT {
+            if should_skip_member(member) {
                 continue;
             }
             
@@ -534,7 +560,7 @@ write_struct :: (bytes: *[..] u8, value: $T) {
             member_info := member.type;
             member_type := get_type(member_info);
 
-            if member.flags & .CONSTANT {
+            if should_skip_member(member) {
                 continue;
             }
 
@@ -560,7 +586,7 @@ write_struct :: (bytes: *[..] u8, value: $T) {
             } else if member_info.type == .ARRAY {
                 append(*builder, tprint("inline write_array(bytes, value.%);", member.name));
             } else {
-                print("Unhandled serialization type. %\n", T);
+                print("Unhandled serialization type. % %\n", member_info.type, T);
                 assert(false, "Unhandled serialization type.");
             }
         }
@@ -570,19 +596,16 @@ write_struct :: (bytes: *[..] u8, value: $T) {
 }
 
 write_array_reuse :: (bytes: *[..] u8, value: *$T) {
-    // info :: #run cast(*Type_Info_Array) type_info(T);
-    // element_info :: #run info.element_type;
     element_info_type :: #run (cast(*Type_Info_Array) type_info(T)).element_type.type;
+    array_type :: #run (cast(*Type_Info_Array) type_info(T)).array_type;
     element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
     allocate_bytes := value.count * element_size;
     memcpy(bytes.data + bytes.count, value.data, allocate_bytes);
-    
-    value.data = cast(*element_type) bytes.count;
-    bytes.count += allocate_bytes;
 
-    print("write array reuse count is %\n", value.count);
+    value.data = cast(*element_type) bytes.count;
+        bytes.count += allocate_bytes;
 
     // if this array data isn't pod we have to go through 1 by 1
     #if #run !is_pod(element_type) {
@@ -598,6 +621,8 @@ write_array_reuse :: (bytes: *[..] u8, value: *$T) {
                 inline write_struct_reuse(bytes, element_pointer);
             } else #if #run element_info_type == .ARRAY {
                 inline write_array_reuse(bytes, element_pointer);
+            } else #if #run element_info_type == .VOID {
+
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
                 #run assert(false, "Unhandled serialization type.");
@@ -623,8 +648,10 @@ write_array :: (bytes: *[..] u8, value: $T) {
         memcpy(bytes.data + bytes.count + count_size, value.data, allocate_size);
         bytes.count += count_size + allocate_size;
     } else {
-        memcpy(bytes.data + bytes.count, *count, count_size);
-        bytes.count += count_size;
+        if (cast(*Type_Info_Array) type_info(T)).array_type != .FIXED {
+            memcpy(bytes.data + bytes.count, *count, count_size);
+            bytes.count += count_size;
+        }
 
         for element: value {
             #if #run element_info_type == .STRING {
@@ -635,12 +662,28 @@ write_array :: (bytes: *[..] u8, value: $T) {
                 inline write_struct(bytes, element);
             } else #if #run element_info_type == .ARRAY {
                 inline write_array(bytes, element);
+            } else #if #run element_info_type == .VOID {
+
             } else {
                 #run print("Unhandled serialization type. %\n", element_type);
                 #run assert(false, "Unhandled serialization type.");
             }
         }
     }
+}
+
+should_skip_member :: (member: Type_Info_Struct_Member) -> bool {
+    member_info := member.type;
+    member_type := get_type(member_info);
+
+    skip := !!(member.flags & .CONSTANT);
+    skip = skip || (member.flags & .USING && !member.name);
+    skip = skip || (member_info.type == .VOID || member_info.type == .PROCEDURE);
+    for note: member.notes {
+        skip = skip || equal_nocase(note, "serializer(skip)");
+    }
+
+    return skip;
 }
 
 get_type :: (info: *Type_Info) -> Type {
@@ -653,12 +696,15 @@ get_write_size :: (value: $T) -> int {
 
     #if #run is_pod(T) {
         return size_of(T);
-    } else #if #run info_type == .STRING {
+    } else #if info_type == .STRING {
         return size_of(count_type) + value.count;
-    } else #if #run info_type == .POINTER {
-        return size_of(bool) + get_write_size(value.*);
-    } else #if #run info_type == .STRUCT {
-
+    } else #if info_type == .POINTER {
+        if value {
+            return size_of(bool) + get_write_size(value.*);
+        } else {
+            return size_of(bool);
+        }
+    } else #if info_type == .STRUCT {
         #insert #run () -> string {
             info := type_info(T);
             struct_info := cast(*Type_Info_Struct) info;
@@ -668,10 +714,7 @@ get_write_size :: (value: $T) -> int {
 
             visited_byte_offsets: [..] int;
             for member: struct_info.members {
-                member_info := member.type;
-                member_type := get_type(member_info);
-
-                if member.flags & .CONSTANT {
+                if should_skip_member(member) {
                     continue;
                 }
 
@@ -692,7 +735,7 @@ get_write_size :: (value: $T) -> int {
 
             return builder_to_string(*builder);
         }();
-    } else #if #run info_type == .ARRAY {
+    } else #if info_type == .ARRAY {
         // array_info :: #run cast(*Type_Info_Array) info;
         array_info_array_type :: #run (cast(*Type_Info_Array) type_info(T)).array_type;
         // element_info :: #run (cast(*Type_Info_Array) info).element_type;
@@ -714,9 +757,11 @@ get_write_size :: (value: $T) -> int {
             }
             return total_size;
         }
+    } else #if info_type == .VOID {
+        return 0;
     } else {
-        #run print("Unhandled serialization type. %\n", element_type);
-        #run assert(false, "Unhandled serialization type.");
+        #run print("Unhandled serialization type. % %\n", info_type, element_type);
+        #run assert(false, tprint("Unhandled serialization type. % %\n", info_type, element_type));
     }
 }
 
@@ -735,11 +780,11 @@ get_data_write_size_reuse :: (value: $T) -> int {
 
     #if #run is_pod(T) {
         return 0;
-    } else #if #run info_type == .STRING {
+    } else #if info_type == .STRING {
         return value.count;
-    } else #if #run info_type == .POINTER {
+    } else #if info_type == .POINTER {
         return get_write_size_reuse(value.*);
-    } else #if #run info_type == .STRUCT {
+    } else #if info_type == .STRUCT {
         #insert #run () -> string {
             info := type_info(T);
             struct_info := cast(*Type_Info_Struct) info;
@@ -750,7 +795,8 @@ get_data_write_size_reuse :: (value: $T) -> int {
             for member: struct_info.members {
                 member_info := member.type;
                 member_type := get_type(member_info);
-                if member.flags & .CONSTANT {
+                
+                if should_skip_member(member) {
                     continue;
                 }
                 
@@ -770,15 +816,13 @@ get_data_write_size_reuse :: (value: $T) -> int {
 
             return builder_to_string(*builder);
         }();
-    } else #if #run info_type == .ARRAY {
-        // info :: #run type_info(T);
-        // array_info :: #run cast(*Type_Info_Array) info;
-        // element_info :: #run array_info.element_type;
+    } else #if info_type == .ARRAY {
+        array_type :: #run (cast(*Type_Info_Array) type_info(T)).array_type;
         element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     
         #if #run is_pod(element_type) {
             return value.count * size_of(element_type);
-        } else #if #run array_info.array_type == .FIXED {
+        } else #if array_type == .FIXED {
             total_size := 0;
             for element: value {
                 total_size += get_data_write_size_reuse(element);
@@ -791,9 +835,11 @@ get_data_write_size_reuse :: (value: $T) -> int {
             }
             return total_size;
         }
+    } else #if info_type == .VOID {
+        return 0;
     } else {
-        #run print("Unhandled serialization type. %\n", element_type);
-        #run assert(false, "Unhandled serialization type.");
+        #run print("Unhandled serialization type. % %\n", info_type, element_type);
+        #run assert(false, tprint("Unhandled serialization type. % %\n", info_type, element_type));
     }
 }
 
@@ -1496,9 +1542,14 @@ Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
     }
 }
 
-
-#run assert(size_of(int) == 8);
-#run assert(size_of(float) == 4);
-#run assert(size_of(float64) == 8);
+#run {
+    assert(size_of(int) == 8);
+    assert(size_of(float) == 4);
+    assert(size_of(float64) == 8);
+};
+// #run assert(size_of(int) == 8);
+// #run assert(size_of(float) == 4);
+// #run assert(size_of(float64) == 8);
 
 #import "Basic";
+#import "String";

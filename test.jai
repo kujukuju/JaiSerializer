@@ -6,6 +6,67 @@ main :: () {
     assert((cast(int) (cast(*TypeWithConstant1) ((cast(*u8) test_pointer) + 10))) == 1010);
     assert((cast(*TypeWithConstant1) ((cast(*u8) test_pointer) + 10)) == xx 1010);
 
+    OuterThing :: struct {
+        inner_thing: ThingWithUnion;
+    }
+
+    ThingWithUnion :: struct {
+        a: int;
+        union {
+            b: int;
+            c: int;
+        }
+    }
+
+    #import "KodaJai";
+
+    thing1: ShaderUniform;
+    thing1.name = "hey";
+    thing1.location = 1;
+    thing1.uint1 = 2;
+    bytes1: [..] u8;
+    serializer_write(*bytes1, thing1);
+
+    thing2: ShaderUniform;
+    serializer_read(bytes1, *thing2);
+
+    print("% % %\n", thing2.name, thing2.location, thing2.uint1);
+
+
+    UsingThing :: struct {
+        using thing: ThingWithUnion;
+    }
+
+    thing3: UsingThing;
+    thing3.a = 1;
+    thing3.b = 2;
+    bytes2: [..] u8;
+    serializer_write(*bytes2, thing3);
+
+    thing4: UsingThing;
+    serializer_read(bytes2, *thing4);
+
+    print("% %\n", thing4.a, thing4.b);
+
+
+    // thing5: SerializeStructure(*Font);
+    // bytes3: [..] u8;
+    // serializer_write(*bytes3, thing5);
+
+    // thing6: SerializeStructure(*Font);
+    // serializer_read(bytes3, *thing6);
+
+    FontParticleGpu :: struct {}
+    FontParticleCpu :: struct {}
+    thing7: ParticleSystem(FontParticleGpu, FontParticleCpu, sort = false);
+    bytes4: [..] u8;
+    serializer_write(*bytes4, thing7);
+
+    thing8: ParticleSystem(FontParticleGpu, FontParticleCpu, sort = false);
+    serializer_read(bytes4, *thing8);
+
+    /*
+
     {
         thing1: TypeWithConstant1;
         thing1.not_const = 1;
@@ -61,19 +122,106 @@ main :: () {
 
 
     {
-        #import "KodaJai";
+        FixedType :: struct {
+            data: [100] u8;
+        }
 
-        koda_init();
-
-        geometry1 := load_geometry("collider.obj", should_upload = false);
+        thing1: FixedType;
+        for i: 0..99 {
+            thing1.data[i] = cast(u8) i;
+        }
         bytes: [..] u8;
-        serializer_write(*bytes, geometry1);
+        serializer_write(*bytes, thing1);
 
-        geometry2: *Geometry;
-        serializer_read(bytes, *geometry2);
+        thing2: FixedType;
+        serializer_read(bytes, *thing2);
 
-        print("%\n%\n\n", geometry1.*, geometry2.*);
+        print("%\n%\n\n", thing1, thing2);
     }
+
+
+
+    {
+        FixedType :: struct {
+            data: [100] u8;
+        }
+
+        thing1: FixedType;
+        for i: 0..99 {
+            thing1.data[i] = cast(u8) i;
+        }
+        bytes: [..] u8;
+        serializer_write(*bytes, thing1, reuse_memory = true);
+
+        thing2: FixedType;
+        serializer_read(bytes, *thing2, reuse_memory = true);
+
+        print("%\n%\n\n", thing1, thing2);
+    }
+
+
+
+    {
+        FixedType :: struct {
+            data: [] u8;
+        }
+
+        thing1: FixedType;
+        thing1.data = NewArray(100, u8);
+        for i: 0..99 {
+            thing1.data[i] = cast(u8) i;
+        }
+        bytes: [..] u8;
+        serializer_write(*bytes, thing1, reuse_memory = true);
+
+        print("Wrote % bytes.\n", bytes.count);
+
+        thing2: FixedType;
+        serializer_read(bytes, *thing2, reuse_memory = true);
+
+        print("%\n%\n\n", thing1, thing2);
+    }
+
+
+
+    {
+        FixedType :: struct {
+            data: [100] [] u8;
+        }
+
+        thing1: FixedType;
+        for i: 0..99 {
+            thing1.data[i] = NewArray(i, u8);
+            for a: 0..i - 1 {
+                thing1.data[i][a] = cast(u8) a;
+            }
+        }
+        bytes: [..] u8;
+        serializer_write(*bytes, thing1, reuse_memory = true);
+
+        thing2: FixedType;
+        serializer_read(bytes, *thing2, reuse_memory = true);
+
+        print("%\n%\n\n", thing1, thing2);
+    }
+    */
+
+
+
+    // {
+    //     #import "KodaJai";
+
+    //     koda_init();
+
+    //     geometry1 := load_geometry("collider.obj", should_upload = false);
+    //     bytes: [..] u8;
+    //     serializer_write(*bytes, geometry1);
+
+    //     geometry2: *Geometry;
+    //     serializer_read(bytes, *geometry2);
+
+    //     print("%\n%\n\n", geometry1.*, geometry2.*);
+    // }
 }
 
 // main :: () {

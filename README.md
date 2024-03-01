@@ -1,3 +1,12 @@
+
+## WARNING
+
+This project has gone through a lot of changes primarily focused around the very confusing reuse_memory flag.
+
+Things broke and some things that should work don't work and will crash. But for simple serializing and deserializing it should be fine. (And VERY fast when reusing memory.)
+
+I'll refactor and fix everything in the near-ish future.
+
 ## Jai Serializer
 
 Serializes structs and data based on the member variables.
