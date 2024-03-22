@@ -812,6 +812,10 @@ get_data_write_size_reuse :: (value: $T) -> int {
                 }
             }
 
+            if !written {
+                append(*builder, "return 0");
+            }
+
             append(*builder, ";");
 
             return builder_to_string(*builder);
@@ -840,6 +844,7 @@ get_data_write_size_reuse :: (value: $T) -> int {
     } else {
         #run print("Unhandled serialization type. % %\n", info_type, element_type);
         #run assert(false, tprint("Unhandled serialization type. % %\n", info_type, element_type));
+        return 0;
     }
 }
 
