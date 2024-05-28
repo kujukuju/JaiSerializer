@@ -20,10 +20,8 @@ main :: () {
 
     #import "KodaJai";
 
-    thing1: ShaderUniform;
-    thing1.name = "hey";
+    thing1: ShaderUniform = create_uniform("hey", 2);
     thing1.location = 1;
-    thing1.uint1 = 2;
     bytes1: [..] u8;
     serializer_write(*bytes1, thing1);
 
@@ -48,6 +46,48 @@ main :: () {
 
     print("% %\n", thing4.a, thing4.b);
 
+    #import "Math";
+
+    FatEmitterType :: enum {
+        One :: 1;
+        Two :: 2;
+    }
+
+    FatLevelRenderable :: struct {
+        name: string;
+        geometry: int = -1;
+        instances: [..] Matrix4;
+    }
+
+    FatLevel :: struct {
+        geometries: [..] *Geometry;
+        emitters: [..] struct {
+            position: Vector3;
+            type: FatEmitterType;
+        };
+        hat_buildings_red: [10] [..] FatLevelRenderable;
+    }
+
+    level: FatLevel;
+    array_add(*level.geometries, New(Geometry));
+    array_add(*level.geometries[0].vertices, 1, 1, 1);
+    array_add(*level.emitters, .{.{2, 2, 2}, .Two});
+    renderable := array_add(*level.hat_buildings_red[0]);
+    renderable.name = "name";
+    renderable.geometry = 0;
+    array_add(*renderable.instances, Matrix4_Identity);
+
+    bytes3: [..] u8;
+    serializer_write(*bytes3, level);
+
+    level2: FatLevel;
+    serializer_read(bytes3, *level2);
+
+    print("%\n%\n", level, level2);
+    print("%\n%\n", level.geometries[0].*, level2.geometries[0].*);
+    print("%\n%\n", level.emitters, level2.emitters);
+    print("%\n%\n", level.hat_buildings_red, level2.hat_buildings_red);
+
 
     // thing5: SerializeStructure(*Font);
     // bytes3: [..] u8;
@@ -56,14 +96,14 @@ main :: () {
     // thing6: SerializeStructure(*Font);
     // serializer_read(bytes3, *thing6);
 
-    FontParticleGpu :: struct {}
-    FontParticleCpu :: struct {}
-    thing7: ParticleSystem(FontParticleGpu, FontParticleCpu, sort = false);
-    bytes4: [..] u8;
-    serializer_write(*bytes4, thing7);
+    // FontParticleGpu :: struct {}
+    // FontParticleCpu :: struct {}
+    // thing7: ParticleSystem(FontParticleGpu, FontParticleCpu, sort = false);
+    // bytes4: [..] u8;
+    // serializer_write(*bytes4, thing7);
 
-    thing8: ParticleSystem(FontParticleGpu, FontParticleCpu, sort = false);
-    serializer_read(bytes4, *thing8);
+    // thing8: ParticleSystem(FontParticleGpu, FontParticleCpu, sort = false);
+    // serializer_read(bytes4, *thing8);
 
     /*
 

@@ -601,31 +601,52 @@ write_array_reuse :: (bytes: *[..] u8, value: *$T) {
     element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     element_size :: #run size_of(element_type);
 
-    allocate_bytes := value.count * element_size;
-    memcpy(bytes.data + bytes.count, value.data, allocate_bytes);
+    #if array_type == .FIXED {
+        #if #run !is_pod(element_type) {
+            for i: 0..value.count - 1 {
+                #if element_info_type == .STRING {
+                    inline write_string_reuse(bytes, value.data + i);
+                } else #if element_info_type == .POINTER {
+                    inline write_pointer_reuse(bytes, value.data + i);
+                } else #if element_info_type == .STRUCT {
+                    inline write_struct_reuse(bytes, value.data + i);
+                } else #if element_info_type == .ARRAY {
+                    inline write_array_reuse(bytes, value.data + i);
+                } else #if element_info_type == .VOID {
 
-    value.data = cast(*element_type) bytes.count;
+                } else {
+                    #run print("Unhandled serialization type. %\n", element_type);
+                    #run assert(false, "Unhandled serialization type.");
+                }
+            }
+        }
+    } else {
+        allocate_bytes := value.count * element_size;
+        memcpy(bytes.data + bytes.count, value.data, allocate_bytes);
+
+        value.data = cast(*element_type) bytes.count;
         bytes.count += allocate_bytes;
 
-    // if this array data isn't pod we have to go through 1 by 1
-    #if #run !is_pod(element_type) {
-        start_pointer := cast(*element_type) (bytes.data + (cast(int) value.data));
-        for i: 0..value.count - 1 {
-            element_pointer: *element_type = start_pointer + i;
+        // if this array data isn't pod we have to go through 1 by 1
+        #if #run !is_pod(element_type) {
+            start_pointer := cast(*element_type) (bytes.data + cast(int) value.data);
+            for i: 0..value.count - 1 {
+                element_pointer: *element_type = start_pointer + i;
 
-            #if #run element_info_type == .STRING {
-                inline write_string_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .POINTER {
-                inline write_pointer_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .STRUCT {
-                inline write_struct_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .ARRAY {
-                inline write_array_reuse(bytes, element_pointer);
-            } else #if #run element_info_type == .VOID {
+                #if element_info_type == .STRING {
+                    inline write_string_reuse(bytes, element_pointer);
+                } else #if element_info_type == .POINTER {
+                    inline write_pointer_reuse(bytes, element_pointer);
+                } else #if element_info_type == .STRUCT {
+                    inline write_struct_reuse(bytes, element_pointer);
+                } else #if element_info_type == .ARRAY {
+                    inline write_array_reuse(bytes, element_pointer);
+                } else #if element_info_type == .VOID {
 
-            } else {
-                #run print("Unhandled serialization type. %\n", element_type);
-                #run assert(false, "Unhandled serialization type.");
+                } else {
+                    #run print("Unhandled serialization type. %\n", element_type);
+                    #run assert(false, "Unhandled serialization type.");
+                }
             }
         }
     }
@@ -824,20 +845,26 @@ get_data_write_size_reuse :: (value: $T) -> int {
         array_type :: #run (cast(*Type_Info_Array) type_info(T)).array_type;
         element_type :: #run get_type((cast(*Type_Info_Array) type_info(T)).element_type);
     
-        #if #run is_pod(element_type) {
-            return value.count * size_of(element_type);
-        } else #if array_type == .FIXED {
-            total_size := 0;
-            for element: value {
-                total_size += get_data_write_size_reuse(element);
+        #if array_type == .FIXED {
+            #if #run is_pod(element_type) {
+                return 0;
+            } else {
+                total_size := 0;
+                for element: value {
+                    total_size += get_data_write_size_reuse(element);
+                }
+                return total_size;
             }
-            return total_size;
         } else {
-            total_size := 0;
-            for element: value {
-                total_size += get_write_size_reuse(element);
-            }
-            return total_size;
+            #if #run is_pod(element_type) {
+                return value.count * size_of(element_type);
+            } else {
+                total_size := 0;
+                for element: value {
+                    total_size += get_write_size_reuse(element);
+                }
+                return total_size;
+        }
         }
     } else #if info_type == .VOID {
         return 0;
