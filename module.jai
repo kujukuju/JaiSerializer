@@ -14,6 +14,7 @@ serializer_read :: (bytes: [] u8, value: *$T, $reuse_memory: bool = false, $loc 
 }
 
 serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool = false, $loc := #caller_location) -> int {
+    #assert #run valid_alignment(T) "Invalid serialization type read alignment.\n";
     // info :: #run type_info(T);
     info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
@@ -68,6 +69,7 @@ serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool =
 }
 
 serializer_write :: (bytes: *[..] u8, value: $T, $reuse_memory: bool = false) {
+    #assert #run valid_alignment(T) "Invalid serialization type write alignment.\n";
     // info :: #run type_info(T);
     info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
@@ -167,6 +169,162 @@ is_pod :: (T: Type) -> bool {
 }
 
 #scope_file
+
+should_visited :: (info: *Type_Info_Struct, member_index: int) -> bool {
+    if info.members[member_index].flags & .CONSTANT {
+        return false;
+    }
+    for i: 0..member_index - 1 {
+        if info.members[i].offset_in_bytes == info.members[member_index].offset_in_bytes return false;
+    }
+    return true;
+}
+
+get_alignment :: (T: Type) -> int {
+    info := cast(*Type_Info) T;
+
+    if info.type == {
+        case .STRUCT;
+            struct_info := cast(*Type_Info_Struct) info;
+            largest := 0;
+            for member: struct_info.members {
+                if !should_visited(struct_info, it_index) {
+                    continue;
+                }
+                largest = max(largest, get_alignment((cast(*Type) *member.type).*));
+            }
+            return largest;
+        case .ARRAY;
+            array_info := cast(*Type_Info_Array) info;
+            if #complete array_info.array_type == {
+                case .FIXED;
+                    return get_alignment((cast(*Type) *array_info.element_type).*);
+                case .VIEW;
+                    return max(8, get_alignment((cast(*Type) *array_info.element_type).*));
+                case .RESIZABLE;
+                    return max(8, get_alignment((cast(*Type) *array_info.element_type).*));
+            }
+        case .STRING; #through;
+        case .PROCEDURE; #through;
+        case .POINTER; #through;
+        case .TYPE;
+            return 8;
+        case .FLOAT; #through;
+        case .INTEGER; #through;
+        case .VOID; #through;
+        case .BOOL; #through;
+        case .ENUM;
+            return min(next_power_of_two((cast(*Type_Info) T).runtime_size), 8);
+        case;
+            assert(false, "Invalid alignment type. %\n", T);
+            return 0;
+    }
+}
+
+valid_alignment :: (T: Type) -> bool {
+    info := cast(*Type_Info) T;
+
+    expected_offset := 0;
+
+    if info.type == {
+        case .STRUCT;
+            struct_info := cast(*Type_Info_Struct) info;
+            for member: struct_info.members {
+                if !should_visited(struct_info, it_index) {
+                    continue;
+                }
+
+                expected_alignment := get_alignment((cast(*Type) *member.type).*);
+                if expected_alignment == 0 {
+                    continue;
+                }
+
+                // alignment based on the type size
+                misaligment := expected_offset % expected_alignment;
+                if misaligment > 0 {
+                    expected_offset += expected_alignment - misaligment;
+                }
+
+                if member.offset_in_bytes != expected_offset {
+                    assert(false, "Invalid struct member offset. % %\nActual %\nExpected %\n", struct_info.name, member.name, member.offset_in_bytes, expected_offset);
+                    return false;
+                }
+
+                expected_offset += member.type.runtime_size;
+            }
+            
+            if struct_info.runtime_size != expected_offset {
+                assert(false, "Invalid struct size alignment. %\nActual %\nExpected %\n", struct_info.name, struct_info.runtime_size, expected_offset);
+                return false;
+            }
+
+            return true;
+
+        case .POINTER;
+            pointer_info := cast(*Type_Info_Pointer) info;
+            return valid_alignment((cast(*Type) *pointer_info.pointer_to).*);
+
+        case .ARRAY;
+            array_info := cast(*Type_Info_Array) info;
+            if #complete array_info.array_type == {
+                case .FIXED;
+                case .VIEW;
+                    arr: [] int;
+                    if cast(int) *arr.count != cast(int) *arr {
+                        assert(false, "Invalid array count offset.\nActual %\nExpected %\n", *arr.count, cast(int) *arr);
+                        return false;
+                    }
+                    if cast(int) *arr.data != cast(int) *arr + 8 {
+                        assert(false, "Invalid array data offset.\nActual %\nExpected %\n", cast(int) *arr.data, cast(int) *arr + 8);
+                        return false;
+                    }
+                case .RESIZABLE;
+                    arr: [..] int;
+                    if cast(int) *arr.count != cast(int) *arr {
+                        assert(false, "Invalid array count offset.\nActual %\nExpected %\n", *arr.count, cast(int) *arr);
+                        return false;
+                    }
+                    if cast(int) *arr.data != cast(int) *arr + 8 {
+                        assert(false, "Invalid array data offset.\nActual %\nExpected %\n", cast(int) *arr.data, cast(int) *arr + 8);
+                        return false;
+                    }
+                    if cast(int) *arr.allocated != cast(int) *arr + 16 {
+                        assert(false, "Invalid array allocated offset.\nActual %\nExpected %\n", cast(int) *arr.allocated, cast(int) *arr + 16);
+                        return false;
+                    }
+                    if cast(int) *arr.allocator != cast(int) *arr + 24 {
+                        assert(false, "Invalid array allocator offset.\nActual %\nExpected %\n", cast(int) *arr.allocator, cast(int) *arr + 24);
+                        return false;
+                    }
+            }
+            return valid_alignment((cast(*Type) *array_info.element_type).*);
+
+        case .STRING;
+            str: string;
+            if cast(int) *str.count != cast(int) *str {
+                assert(false, "Invalid string count offset.\nActual %\nExpected %\n", *str.count, cast(int) *str);
+                return false;
+            }
+            if cast(int) *str.data != cast(int) *str + 8 {
+                assert(false, "Invalid string data offset.\nActual %\nExpected %\n", cast(int) *str.data, cast(int) *str + 8);
+                return false;
+            }
+            return true;
+
+        case .PROCEDURE; #through;
+        case .TYPE; #through;
+        case .FLOAT; #through;
+        case .INTEGER; #through;
+        case .VOID; #through;
+        case .BOOL; #through;
+        case .ENUM;
+            return true;
+
+        case;
+            assert(false, "Unhandled alignment type. %", T);
+            return false;
+    }
+}
 
 serializer_read_reuse :: (bytes: [] u8, value: *$T) {
     // info :: #run type_info(T);
@@ -1065,6 +1223,14 @@ get_struct_type :: (bytes: [] u8, index: int, $types: [$N] Type) -> bool, Type {
     return false, bool;
 }
 
+next_power_of_two :: (i: int) -> int {
+    val := 1;
+    while val < i {
+        val += val;
+    }
+    return val;
+}
+
 reuse_allocator_proc :: (mode: Allocator_Mode, size: s64, old_size: s64, old_memory: *void, allocator_data: *void) -> *void {
     assert(false, "You cannot allocate into an array that was deserialized with reuse_memory mode enabled.");
     return null;
@@ -1079,506 +1245,504 @@ reuse_allocator :: Allocator.{reuse_allocator_proc, null};
 
 
 
-Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
-    read :: (bytes: [] u8, index: *int, value: *bool) {
-        assert(<< index + 1 <= bytes.count);
-
-        << value = << cast(*bool) *bytes[<< index];
-        << index += 1;
-    }
-
-    write :: (bytes: *[..] u8, value: bool) {
-        array_add(bytes, cast(u8) value);
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *u8) {
-        assert(<< index + 1 <= bytes.count);
-
-        << value = << cast(*u8) *bytes[<< index];
-        << index += 1;
-    }
-
-    write :: (bytes: *[..] u8, value: u8) {
-        array_add(bytes, value);
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *s8) {
-        assert(<< index + 1 <= bytes.count);
-
-        << value = << cast(*s8) *bytes[<< index];
-        << index += 1;
-    }
-
-    write :: (bytes: *[..] u8, value: s8) {
-        byte: *u8 = xx *value;
-        array_add(bytes, << byte);
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *u16) {
-        assert(<< index + 2 <= bytes.count);
-
-        << value = << cast(*u16) *bytes[<< index];
-        << index += 2;
-    }
-
-    write :: (bytes: *[..] u8, value: u16) {
-        byte: *u8 = xx *value;
-        for i: 0..1 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *s16) {
-        assert(<< index + 2 <= bytes.count);
-
-        << value = << cast(*s16) *bytes[<< index];
-        << index += 2;
-    }
-
-    write :: (bytes: *[..] u8, value: s16) {
-        byte: *u8 = xx *value;
-        for i: 0..1 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *u32) {
-        assert(<< index + 4 <= bytes.count);
-
-        << value = << cast(*u32) *bytes[<< index];
-        << index += 4;
-    }
-
-    write :: (bytes: *[..] u8, value: u32) {
-        byte: *u8 = xx *value;
-        for i: 0..3 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *s32) {
-        assert(<< index + 4 <= bytes.count);
-
-        << value = << cast(*s32) *bytes[<< index];
-        << index += 4;
-    }
-
-    write :: (bytes: *[..] u8, value: s32) {
-        byte: *u8 = xx *value;
-        for i: 0..3 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *u64) {
-        assert(<< index + 8 <= bytes.count);
-
-        << value = << cast(*u64) *bytes[<< index];
-        << index += 8;
-    }
-
-    write :: (bytes: *[..] u8, value: u64) {
-        byte: *u8 = xx *value;
-        for i: 0..7 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *s64) {
-        assert(<< index + 8 <= bytes.count);
-
-        << value = << cast(*s64) *bytes[<< index];
-        << index += 8;
-    }
-
-    write :: (bytes: *[..] u8, value: s64) {
-        byte: *u8 = xx *value;
-        for i: 0..7 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *float) {
-        assert(index.* + 4 <= bytes.count);
-
-        value.* = (cast(*float) *bytes[<< index]).*;
-        index.* += 4;
-    }
-
-    write :: (bytes: *[..] u8, value: float) {
-        byte: *u8 = cast(*u8) *value;
-        for i: 0..3 {
-            array_add(bytes, (byte + i).*);
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *float64) {
-        assert(<< index + 8 <= bytes.count);
-
-        << value = << cast(*float64) *bytes[<< index];
-        << index += 8;
-    }
-
-    write :: (bytes: *[..] u8, value: float64) {
-        byte: *u8 = xx *value;
-        for i: 0..7 {
-            array_add(bytes, << (byte + i));
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *string) {
-        count: count_type;
-        read(bytes, index, *count);
-        #if unicode_strings {
-            assert(<< index + count * 4 <= bytes.count);
-
-            value.data = alloc(count * 4);
-            memcpy(value.data, *bytes[<< index], count * 4);
-            value.count = count; // im not sure about this
-
-            << index += count * 4;
-        } else {
-            assert(<< index + count <= bytes.count);
-
-            value.data = alloc(count);
-            memcpy(value.data, *bytes[<< index], count);
-            value.count = count;
-
-            << index += count;
-        }
-    }
-
-    write :: (bytes: *[..] u8, value: string) {
-        write(bytes, cast(count_type) value.count);
-        #if unicode_strings {
-            for i: 0..value.count - 1 {
-                array_add(bytes, 0);
-                array_add(bytes, 0);
-                array_add(bytes, 0);
-                array_add(bytes, value[i]);
-            }
-        } else {
-            for i: 0..value.count - 1 {
-                array_add(bytes, value[i]);
-            }
-        }
-    }
-
-    read :: (bytes: [] u8, index: *int, value: *$T) {
-        #if #run type_info(T).type == .ARRAY {
-            read_array(bytes, index, value);
-        } else #if #run type_info(T).type == .ENUM {
-            read_enum(bytes, index, value);
-        } else #if #run type_info(T).type == .STRUCT {
-            read_struct(bytes, index, value);
-        } else #if #run type_info(T).type == .VARIANT {
-            read_variant(bytes, index, value);
-        } else #if #run type_info(T).type == .POINTER {
-            read_pointer(bytes, index, value);
-        } else {
-            #run () {
-                print("Not supported type read. % %\n", type_info(T).type, T);
-            }();
-            #run assert(false && tprint("Not supported type read. %", type_info(T).type));
-        }
-    }
-
-    write :: (bytes: *[..] u8, value: $T) {
-        #if #run type_info(T).type == .ARRAY {
-            write_array(bytes, value);
-        } else #if #run type_info(T).type == .ENUM {
-            write_enum(bytes, value);
-        } else #if #run type_info(T).type == .STRUCT {
-            write_struct(bytes, value);
-        } else #if #run type_info(T).type == .VARIANT {
-            write_variant(bytes, value);
-        } else #if #run type_info(T).type == .POINTER {
-            write_pointer(bytes, value);
-        } else {
-            #run () {
-                print("Not supported type write. % %\n", type_info(T).type, T);
-            }();
-            #run assert(false && tprint("Not supported type write. %", type_info(T).type));
-        }
-    }
-
-    read_array :: (bytes: [] u8, index: *int, array: *[$N] $T) {
-        // TODO could just memcpy N and then increase index appropriately
-        for i: 0..array.count - 1 {
-            read(bytes, index, (cast(*T) array.data) + i);
-        }
-    }
-
-    write_array :: (bytes: *[..] u8, array: [$N] $T) {
-        for i: 0..N - 1 {
-            write(bytes, array[i]);
-        }
-    }
-
-    read_array :: (bytes: [] u8, index: *int, value: *[..] $T) {
-        count: int;
-        read(bytes, index, *count);
-        array_resize(value, count);
-
-        value.count = count;
-        for i: 0..count - 1 {
-            read(bytes, index, (cast(*T) value.data) + i);
-        }
-    }
-
-    write_array :: (bytes: *[..] u8, array: [..] $T) {
-        write(bytes, array.count);
-
-        for i: 0..array.count - 1 {
-            write(bytes, array[i]);
-        }
-    }
-
-    read_array :: (bytes: [] u8, index: *int, value: *[] $T) {
-        count: int;
-        read(bytes, index, *count);
-        << value = NewArray(count, T);
-
-        value.count = count;
-        for i: 0..count - 1 {
-            read(bytes, index, (cast(*T) value.data) + i);
-        }
-    }
-
-    write_array :: (bytes: *[..] u8, array: [] $T) {
-        write(bytes, array.count);
-
-        for i: 0..array.count - 1 {
-            write(bytes, array[i]);
-        }
-    }
-
-    read_enum :: (bytes: [] u8, index: *int, value: *$T) {
-        get_constant_type :: ($bytes: int) -> Type {
-            #if bytes == 1 {
-                return u8;
-            } else #if bytes == 2 {
-                return u16;
-            } else #if bytes == 4 {
-                return u32;
-            } else #if bytes == 8 {
-                return u64;
-            }
-
-            assert(false);
-        };
-
-        enum_bytes :: #run type_info(T).runtime_size;
-        ConstantType :: #run get_constant_type(enum_bytes);
-
-        read(bytes, index, cast(*ConstantType) value);
-    }
-
-    write_enum :: (bytes: *[..] u8, value: $T) {
-        get_constant_type :: ($bytes: int) -> Type {
-            #if bytes == 1 {
-                return u8;
-            } else #if bytes == 2 {
-                return u16;
-            } else #if bytes == 4 {
-                return u32;
-            } else #if bytes == 8 {
-                return u64;
-            }
-
-            assert(false);
-        };
-
-        enum_bytes :: #run type_info(T).runtime_size;
-        ConstantType :: #run get_constant_type(enum_bytes);
-
-        write(bytes, cast(ConstantType) value);
-    }
-
-    read_struct :: (bytes: [] u8, index: *int, value: *$T) {
-        read_member :: ($member_name: string) #expand {
-            {
-                constant_member :: #run () -> bool {
-                    // constant check
-                    struct_info := cast(*Type_Info_Struct) type_info(T);
-                    for member: struct_info.members {
-                        if member.name == member_name {
-                            return !!(member.flags & .CONSTANT);
-                        }
-                    }
-
-                    return false;
-                }();
-
-                // if the byte offset has already been visited it means it's something weird like #place
-                already_visited_byte_offset :: #run () -> bool {
-                    visited_byte_offsets: [..] int;
-                    struct_info := cast(*Type_Info_Struct) type_info(T);
-                    for member: struct_info.members {
-                        if member.name == member_name {
-                            if member.offset_in_bytes < 0 {
-                                return false;
-                            }
-
-                            return array_find(visited_byte_offsets, member.offset_in_bytes);
-                        } else {
-                            array_add(*visited_byte_offsets, member.offset_in_bytes);
-                        }
-                    }
-
-                    return false;
-                }();
-
-                #if !already_visited_byte_offset {
-                    #if constant_member {
-                        struct_info := cast(*Type_Info_Struct) type_info(T);
-                        for member: struct_info.members {
-                            if member.name == member_name {
-                                << index += member.type.runtime_size;
-                                break;
-                            }
-                        }
-                    } else {
-                        // #run print("read %\n", tprint("member_value := *value.%;", member_name));
-                        #insert #run tprint("member_value := *value.%;", member_name);
-                        // #insert #run tprint("print(\"crashing at %\\n\");", member_name);
-                        read(bytes, index, member_value);
-                    }
-                }
-            }
-        }
-
-        expand_for :: (function_name: string, element_names: [] string) -> string {
-            // TODO temp mem only
-            sb: String_Builder;
-
-            for i: 0..element_names.count - 1 {
-                print_to_builder(*sb, "%(\"%\");\n", function_name, element_names[i]);
-            }
-
-            return builder_to_string(*sb);
-        }
-
-        get_member_names :: () -> [] string {
-            #insert #run tprint("member_names: [%] string;", (cast(*Type_Info_Struct) type_info(T)).members.count);
-            info := cast(*Type_Info_Struct) type_info(T);
-            for i: 0..info.members.count - 1 {
-                member_names[i] = info.members[i].name;
-            }
-
-            return member_names;
-        }
-
-        // if it panic crashes here it's because the appropriate type isn't handled
-        #insert #run expand_for("read_member", #run get_member_names());
-    }
-
-    write_struct :: (bytes: *[..] u8, value: $T) {
-        write_member :: ($member_name: string) #expand {
-            {
-                // if the byte offset has already been visited it means it's something weird like #place
-                already_visited_byte_offset :: #run () -> bool {
-                    visited_byte_offsets: [..] int;
-                    struct_info := cast(*Type_Info_Struct) type_info(T);
-                    for member: struct_info.members {
-                        if member.name == member_name {
-                            if member.offset_in_bytes < 0 {
-                                return false;
-                            }
-
-                            return array_find(visited_byte_offsets, member.offset_in_bytes);
-                        } else {
-                            array_add(*visited_byte_offsets, member.offset_in_bytes);
-                        }
-                    }
-
-                    return false;
-                }();
+// Serializer :: struct (count_type: Type = int, unicode_strings: bool = false) {
+//     read :: (bytes: [] u8, index: *int, value: *bool) {
+//         assert(<< index + 1 <= bytes.count);
+
+//         << value = << cast(*bool) *bytes[<< index];
+//         << index += 1;
+//     }
+
+//     write :: (bytes: *[..] u8, value: bool) {
+//         array_add(bytes, cast(u8) value);
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *u8) {
+//         assert(<< index + 1 <= bytes.count);
+
+//         << value = << cast(*u8) *bytes[<< index];
+//         << index += 1;
+//     }
+
+//     write :: (bytes: *[..] u8, value: u8) {
+//         array_add(bytes, value);
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *s8) {
+//         assert(<< index + 1 <= bytes.count);
+
+//         << value = << cast(*s8) *bytes[<< index];
+//         << index += 1;
+//     }
+
+//     write :: (bytes: *[..] u8, value: s8) {
+//         byte: *u8 = xx *value;
+//         array_add(bytes, << byte);
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *u16) {
+//         assert(<< index + 2 <= bytes.count);
+
+//         << value = << cast(*u16) *bytes[<< index];
+//         << index += 2;
+//     }
+
+//     write :: (bytes: *[..] u8, value: u16) {
+//         byte: *u8 = xx *value;
+//         for i: 0..1 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *s16) {
+//         assert(<< index + 2 <= bytes.count);
+
+//         << value = << cast(*s16) *bytes[<< index];
+//         << index += 2;
+//     }
+
+//     write :: (bytes: *[..] u8, value: s16) {
+//         byte: *u8 = xx *value;
+//         for i: 0..1 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *u32) {
+//         assert(<< index + 4 <= bytes.count);
+
+//         << value = << cast(*u32) *bytes[<< index];
+//         << index += 4;
+//     }
+
+//     write :: (bytes: *[..] u8, value: u32) {
+//         byte: *u8 = xx *value;
+//         for i: 0..3 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *s32) {
+//         assert(<< index + 4 <= bytes.count);
+
+//         << value = << cast(*s32) *bytes[<< index];
+//         << index += 4;
+//     }
+
+//     write :: (bytes: *[..] u8, value: s32) {
+//         byte: *u8 = xx *value;
+//         for i: 0..3 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *u64) {
+//         assert(<< index + 8 <= bytes.count);
+
+//         << value = << cast(*u64) *bytes[<< index];
+//         << index += 8;
+//     }
+
+//     write :: (bytes: *[..] u8, value: u64) {
+//         byte: *u8 = xx *value;
+//         for i: 0..7 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *s64) {
+//         assert(<< index + 8 <= bytes.count);
+
+//         << value = << cast(*s64) *bytes[<< index];
+//         << index += 8;
+//     }
+
+//     write :: (bytes: *[..] u8, value: s64) {
+//         byte: *u8 = xx *value;
+//         for i: 0..7 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *float) {
+//         assert(index.* + 4 <= bytes.count);
+
+//         value.* = (cast(*float) *bytes[<< index]).*;
+//         index.* += 4;
+//     }
+
+//     write :: (bytes: *[..] u8, value: float) {
+//         byte: *u8 = cast(*u8) *value;
+//         for i: 0..3 {
+//             array_add(bytes, (byte + i).*);
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *float64) {
+//         assert(<< index + 8 <= bytes.count);
+
+//         << value = << cast(*float64) *bytes[<< index];
+//         << index += 8;
+//     }
+
+//     write :: (bytes: *[..] u8, value: float64) {
+//         byte: *u8 = xx *value;
+//         for i: 0..7 {
+//             array_add(bytes, << (byte + i));
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *string) {
+//         count: count_type;
+//         read(bytes, index, *count);
+//         #if unicode_strings {
+//             assert(<< index + count * 4 <= bytes.count);
+
+//             value.data = alloc(count * 4);
+//             memcpy(value.data, *bytes[<< index], count * 4);
+//             value.count = count; // im not sure about this
+
+//             << index += count * 4;
+//         } else {
+//             assert(<< index + count <= bytes.count);
+
+//             value.data = alloc(count);
+//             memcpy(value.data, *bytes[<< index], count);
+//             value.count = count;
+
+//             << index += count;
+//         }
+//     }
+
+//     write :: (bytes: *[..] u8, value: string) {
+//         write(bytes, cast(count_type) value.count);
+//         #if unicode_strings {
+//             for i: 0..value.count - 1 {
+//                 array_add(bytes, 0);
+//                 array_add(bytes, 0);
+//                 array_add(bytes, 0);
+//                 array_add(bytes, value[i]);
+//             }
+//         } else {
+//             for i: 0..value.count - 1 {
+//                 array_add(bytes, value[i]);
+//             }
+//         }
+//     }
+
+//     read :: (bytes: [] u8, index: *int, value: *$T) {
+//         #if #run type_info(T).type == .ARRAY {
+//             read_array(bytes, index, value);
+//         } else #if #run type_info(T).type == .ENUM {
+//             read_enum(bytes, index, value);
+//         } else #if #run type_info(T).type == .STRUCT {
+//             read_struct(bytes, index, value);
+//         } else #if #run type_info(T).type == .VARIANT {
+//             read_variant(bytes, index, value);
+//         } else #if #run type_info(T).type == .POINTER {
+//             read_pointer(bytes, index, value);
+//         } else {
+//             #run () {
+//                 print("Not supported type read. % %\n", type_info(T).type, T);
+//             }();
+//             #run assert(false && tprint("Not supported type read. %", type_info(T).type));
+//         }
+//     }
+
+//     write :: (bytes: *[..] u8, value: $T) {
+//         #if #run type_info(T).type == .ARRAY {
+//             write_array(bytes, value);
+//         } else #if #run type_info(T).type == .ENUM {
+//             write_enum(bytes, value);
+//         } else #if #run type_info(T).type == .STRUCT {
+//             write_struct(bytes, value);
+//         } else #if #run type_info(T).type == .VARIANT {
+//             write_variant(bytes, value);
+//         } else #if #run type_info(T).type == .POINTER {
+//             write_pointer(bytes, value);
+//         } else {
+//             #run () {
+//                 print("Not supported type write. % %\n", type_info(T).type, T);
+//             }();
+//             #run assert(false && tprint("Not supported type write. %", type_info(T).type));
+//         }
+//     }
+
+//     read_array :: (bytes: [] u8, index: *int, array: *[$N] $T) {
+//         // TODO could just memcpy N and then increase index appropriately
+//         for i: 0..array.count - 1 {
+//             read(bytes, index, (cast(*T) array.data) + i);
+//         }
+//     }
+
+//     write_array :: (bytes: *[..] u8, array: [$N] $T) {
+//         for i: 0..N - 1 {
+//             write(bytes, array[i]);
+//         }
+//     }
+
+//     read_array :: (bytes: [] u8, index: *int, value: *[..] $T) {
+//         count: int;
+//         read(bytes, index, *count);
+//         array_resize(value, count);
+
+//         value.count = count;
+//         for i: 0..count - 1 {
+//             read(bytes, index, (cast(*T) value.data) + i);
+//         }
+//     }
+
+//     write_array :: (bytes: *[..] u8, array: [..] $T) {
+//         write(bytes, array.count);
+
+//         for i: 0..array.count - 1 {
+//             write(bytes, array[i]);
+//         }
+//     }
+
+//     read_array :: (bytes: [] u8, index: *int, value: *[] $T) {
+//         count: int;
+//         read(bytes, index, *count);
+//         << value = NewArray(count, T);
+
+//         value.count = count;
+//         for i: 0..count - 1 {
+//             read(bytes, index, (cast(*T) value.data) + i);
+//         }
+//     }
+
+//     write_array :: (bytes: *[..] u8, array: [] $T) {
+//         write(bytes, array.count);
+
+//         for i: 0..array.count - 1 {
+//             write(bytes, array[i]);
+//         }
+//     }
+
+//     read_enum :: (bytes: [] u8, index: *int, value: *$T) {
+//         get_constant_type :: ($bytes: int) -> Type {
+//             #if bytes == 1 {
+//                 return u8;
+//             } else #if bytes == 2 {
+//                 return u16;
+//             } else #if bytes == 4 {
+//                 return u32;
+//             } else #if bytes == 8 {
+//                 return u64;
+//             }
+
+//             assert(false);
+//         };
+
+//         enum_bytes :: #run type_info(T).runtime_size;
+//         ConstantType :: #run get_constant_type(enum_bytes);
+
+//         read(bytes, index, cast(*ConstantType) value);
+//     }
+
+//     write_enum :: (bytes: *[..] u8, value: $T) {
+//         get_constant_type :: ($bytes: int) -> Type {
+//             #if bytes == 1 {
+//                 return u8;
+//             } else #if bytes == 2 {
+//                 return u16;
+//             } else #if bytes == 4 {
+//                 return u32;
+//             } else #if bytes == 8 {
+//                 return u64;
+//             }
+
+//             assert(false);
+//         };
+
+//         enum_bytes :: #run type_info(T).runtime_size;
+//         ConstantType :: #run get_constant_type(enum_bytes);
+
+//         write(bytes, cast(ConstantType) value);
+//     }
+
+//     read_struct :: (bytes: [] u8, index: *int, value: *$T) {
+//         read_member :: ($member_name: string) #expand {
+//             {
+//                 constant_member :: #run () -> bool {
+//                     // constant check
+//                     struct_info := cast(*Type_Info_Struct) type_info(T);
+//                     for member: struct_info.members {
+//                         if member.name == member_name {
+//                             return !!(member.flags & .CONSTANT);
+//                         }
+//                     }
+
+//                     return false;
+//                 }();
+
+//                 // if the byte offset has already been visited it means it's something weird like #place
+//                 already_visited_byte_offset :: #run () -> bool {
+//                     visited_byte_offsets: [..] int;
+//                     struct_info := cast(*Type_Info_Struct) type_info(T);
+//                     for member: struct_info.members {
+//                         if member.name == member_name {
+//                             if member.offset_in_bytes < 0 {
+//                                 return false;
+//                             }
+
+//                             return array_find(visited_byte_offsets, member.offset_in_bytes);
+//                         } else {
+//                             array_add(*visited_byte_offsets, member.offset_in_bytes);
+//                         }
+//                     }
+
+//                     return false;
+//                 }();
+
+//                 #if !already_visited_byte_offset {
+//                     #if constant_member {
+//                         struct_info := cast(*Type_Info_Struct) type_info(T);
+//                         for member: struct_info.members {
+//                             if member.name == member_name {
+//                                 << index += member.type.runtime_size;
+//                                 break;
+//                             }
+//                         }
+//                     } else {
+//                         // #run print("read %\n", tprint("member_value := *value.%;", member_name));
+//                         #insert #run tprint("member_value := *value.%;", member_name);
+//                         // #insert #run tprint("print(\"crashing at %\\n\");", member_name);
+//                         read(bytes, index, member_value);
+//                     }
+//                 }
+//             }
+//         }
+
+//         expand_for :: (function_name: string, element_names: [] string) -> string {
+//             // TODO temp mem only
+//             sb: String_Builder;
+
+//             for i: 0..element_names.count - 1 {
+//                 print_to_builder(*sb, "%(\"%\");\n", function_name, element_names[i]);
+//             }
+
+//             return builder_to_string(*sb);
+//         }
+
+//         get_member_names :: () -> [] string {
+//             #insert #run tprint("member_names: [%] string;", (cast(*Type_Info_Struct) type_info(T)).members.count);
+//             info := cast(*Type_Info_Struct) type_info(T);
+//             for i: 0..info.members.count - 1 {
+//                 member_names[i] = info.members[i].name;
+//             }
+
+//             return member_names;
+//         }
+
+//         // if it panic crashes here it's because the appropriate type isn't handled
+//         #insert #run expand_for("read_member", #run get_member_names());
+//     }
+
+//     write_struct :: (bytes: *[..] u8, value: $T) {
+//         write_member :: ($member_name: string) #expand {
+//             {
+//                 // if the byte offset has already been visited it means it's something weird like #place
+//                 already_visited_byte_offset :: #run () -> bool {
+//                     visited_byte_offsets: [..] int;
+//                     struct_info := cast(*Type_Info_Struct) type_info(T);
+//                     for member: struct_info.members {
+//                         if member.name == member_name {
+//                             if member.offset_in_bytes < 0 {
+//                                 return false;
+//                             }
+
+//                             return array_find(visited_byte_offsets, member.offset_in_bytes);
+//                         } else {
+//                             array_add(*visited_byte_offsets, member.offset_in_bytes);
+//                         }
+//                     }
+
+//                     return false;
+//                 }();
                 
-                #if !already_visited_byte_offset {
-                    #insert #run tprint("member_value := value.%;", member_name);
-                    write(bytes, member_value);
-                }
-            }
-        }
+//                 #if !already_visited_byte_offset {
+//                     #insert #run tprint("member_value := value.%;", member_name);
+//                     write(bytes, member_value);
+//                 }
+//             }
+//         }
 
-        expand_for :: (function_name: string, element_names: [] string) -> string {
-            // TODO temp mem only
-            sb: String_Builder;
+//         expand_for :: (function_name: string, element_names: [] string) -> string {
+//             // TODO temp mem only
+//             sb: String_Builder;
 
-            for i: 0..element_names.count - 1 {
-                print_to_builder(*sb, "%(\"%\");\n", function_name, element_names[i]);
-            }
+//             for i: 0..element_names.count - 1 {
+//                 print_to_builder(*sb, "%(\"%\");\n", function_name, element_names[i]);
+//             }
 
-            return builder_to_string(*sb);
-        }
+//             return builder_to_string(*sb);
+//         }
 
-        get_member_names :: () -> [] string {
-            #insert #run tprint("member_names: [%] string;", (cast(*Type_Info_Struct) type_info(T)).members.count);
-            info := cast(*Type_Info_Struct) type_info(T);
-            for i: 0..info.members.count - 1 {
-                member_names[i] = info.members[i].name;
-            }
+//         get_member_names :: () -> [] string {
+//             #insert #run tprint("member_names: [%] string;", (cast(*Type_Info_Struct) type_info(T)).members.count);
+//             info := cast(*Type_Info_Struct) type_info(T);
+//             for i: 0..info.members.count - 1 {
+//                 member_names[i] = info.members[i].name;
+//             }
 
-            return member_names;
-        }
+//             return member_names;
+//         }
 
-        // if it panic crashes here it's because the appropriate type isn't handled
-        #insert #run expand_for("write_member", #run get_member_names());
-    }
+//         // if it panic crashes here it's because the appropriate type isn't handled
+//         #insert #run expand_for("write_member", #run get_member_names());
+//     }
 
-    read_variant :: (bytes: [] u8, index: *int, value: *$T) {
-        ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Variant) type_info(T)).variant_of));
+//     read_variant :: (bytes: [] u8, index: *int, value: *$T) {
+//         ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Variant) type_info(T)).variant_of));
 
-        casted: *ConstantType = cast(*ConstantType) value;
-        read(bytes, index, casted);
-    }
+//         casted: *ConstantType = cast(*ConstantType) value;
+//         read(bytes, index, casted);
+//     }
 
-    write_variant :: (bytes: *[..] u8, value: $T) {
-        ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Variant) type_info(T)).variant_of));
+//     write_variant :: (bytes: *[..] u8, value: $T) {
+//         ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Variant) type_info(T)).variant_of));
 
-        casted: ConstantType = cast(ConstantType) value;
-        write(bytes, casted);
-    }
+//         casted: ConstantType = cast(ConstantType) value;
+//         write(bytes, casted);
+//     }
 
-    read_pointer :: (bytes: [] u8, index: *int, value: *$T) {
-        // I think relative pointers were removed?
-        // #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot read a relative pointer.");
+//     read_pointer :: (bytes: [] u8, index: *int, value: *$T) {
+//         // I think relative pointers were removed?
+//         // #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot read a relative pointer.");
 
-        ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
+//         ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
 
-        exists := << cast(*bool) *bytes[<< index];
-        << index += 1;
+//         exists := << cast(*bool) *bytes[<< index];
+//         << index += 1;
 
-        if !exists {
-            << value = null;
-        } else {
-            allocated := New(ConstantType, false);
-            << value = allocated;
+//         if !exists {
+//             << value = null;
+//         } else {
+//             allocated := New(ConstantType, false);
+//             << value = allocated;
 
-            read(bytes, index, allocated);
-        }
-    }
+//             read(bytes, index, allocated);
+//         }
+//     }
 
-    write_pointer :: (bytes: *[..] u8, value: $T) {
-        // #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot write a relative pointer.");
+//     write_pointer :: (bytes: *[..] u8, value: $T) {
+//         // #run assert((cast(*Type_Info_Pointer) type_info(T)).relative_pointer_size == 0, "Cannot write a relative pointer.");
 
-        ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
+//         ConstantType :: #run << (cast(*Type) (*(cast(*Type_Info_Pointer) type_info(T)).pointer_to));
 
-        if value == null {
-            array_add(bytes, 0);
-        } else {
-            array_add(bytes, 1);
-            write(bytes, << value);
-        }
-    }
-}
+//         if value == null {
+//             array_add(bytes, 0);
+//         } else {
+//             array_add(bytes, 1);
+//             write(bytes, << value);
+//         }
+//     }
+// }
 
-#run {
-    assert(size_of(int) == 8);
-    assert(size_of(float) == 4);
-    assert(size_of(float64) == 8);
-};
+#assert size_of(int) == 8;
+#assert size_of(float) == 4;
+#assert size_of(float64) == 8;
 // #run assert(size_of(int) == 8);
 // #run assert(size_of(float) == 4);
 // #run assert(size_of(float64) == 8);
