@@ -14,7 +14,7 @@ serializer_read :: (bytes: [] u8, value: *$T, $reuse_memory: bool = false, $loc 
 }
 
 serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool = false, $loc := #caller_location) -> int {
-    #assert #run valid_alignment(T) "Invalid serialization type read alignment.\n";
+    assert(valid_alignment(T), "Invalid serialization type read alignment.\n");
     // info :: #run type_info(T);
     info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
@@ -69,7 +69,7 @@ serializer_read :: (bytes: [] u8, value: *$T, offset: int, $reuse_memory: bool =
 }
 
 serializer_write :: (bytes: *[..] u8, value: $T, $reuse_memory: bool = false) {
-    #assert #run valid_alignment(T) "Invalid serialization type write alignment.\n";
+    assert(valid_alignment(T), "Invalid serialization type write alignment.\n");
     // info :: #run type_info(T);
     info_type :: #run type_info(T).type;
     t_size :: #run size_of(T);
